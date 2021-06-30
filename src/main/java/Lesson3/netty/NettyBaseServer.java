@@ -1,14 +1,8 @@
-package com.polozov.cloudstorage.lesson03.netty;
+package Lesson3.netty;
 
-import com.polozov.cloudstorage.lesson03.netty.handlers.ByteBufInputHandler;
-import com.polozov.cloudstorage.lesson03.netty.handlers.ChatMessageHandler;
-import com.polozov.cloudstorage.lesson03.netty.handlers.OutputHandler;
-import com.polozov.cloudstorage.lesson03.netty.handlers.StringInputHandler;
+import Lesson3.netty.handlers.StringInputHandler;
 import io.netty.bootstrap.ServerBootstrap;
-import io.netty.channel.Channel;
-import io.netty.channel.ChannelFuture;
-import io.netty.channel.ChannelInitializer;
-import io.netty.channel.EventLoopGroup;
+import io.netty.channel.*;
 import io.netty.channel.nio.NioEventLoopGroup;
 import io.netty.channel.socket.nio.NioServerSocketChannel;
 import io.netty.handler.codec.string.StringDecoder;
@@ -30,7 +24,7 @@ public class NettyBaseServer {
                             channel.pipeline().addLast(
                                     new StringDecoder(), // in - 1
                                     new StringEncoder(), // out - 1
-                                    new ChatMessageHandler() // in - 2
+                                    new StringInputHandler() // in - 2
                             );
                         }
                     });
