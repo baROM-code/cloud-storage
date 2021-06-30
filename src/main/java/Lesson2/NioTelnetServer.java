@@ -10,11 +10,11 @@ import java.nio.channels.Selector;
 import java.nio.channels.ServerSocketChannel;
 import java.nio.channels.SocketChannel;
 import java.nio.charset.StandardCharsets;
-import java.nio.file.FileAlreadyExistsException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.util.*;
+import Lesson2.IOCmd;
 
 public class NioTelnetServer {
     private static final String LS_COMMAND = "\tls          view all files from current directory\n\r";
@@ -25,13 +25,13 @@ public class NioTelnetServer {
     private static final String COPY_COMMAND = "\tcopy        copy file / directory. First arg - from, second arg - to\n\r";
     private static final String CAT_COMMAND = "\tcat         displaying 'txt' file contents\n\r";
     private static final String CHANGENICK_COMMAND = "\tchangenick  change user Nickname\n\r";
-    private static final Path rootpath = Paths.get("server");
+
 
     private final ByteBuffer buffer = ByteBuffer.allocate(512);
 
-    private Map<SocketAddress, String> clients = new HashMap<>();
-    private Map<SocketAddress, Path> clientscurpath = new HashMap<>();
-    private Path currentpath;
+    private Map<SocketAddress, User> clients = new HashMap<>();
+
+
 
     public NioTelnetServer() throws Exception {
         ServerSocketChannel server = ServerSocketChannel.open();
@@ -61,8 +61,8 @@ public class NioTelnetServer {
         SocketChannel channel = ((ServerSocketChannel) key.channel()).accept();
         channel.configureBlocking(false);
         System.out.println("Client connected. IP:" + channel.getRemoteAddress());
-        clients.put(channel.getRemoteAddress(), "user" + clients.size()); // присваивем Ник клиенту
-        clientscurpath.put(channel.getRemoteAddress(), rootpath); // задаем начальный путь клиенту
+        clients.put(channel.getRemoteAddress(), new User("user" + clients.size())); // присваивем Ник клиенту, задаем каталог
+
         channel.register(selector, SelectionKey.OP_READ, "skjghksdhg");
         channel.write(ByteBuffer.wrap("Hello user!\n".getBytes(StandardCharsets.UTF_8)));
         channel.write(ByteBuffer.wrap("Enter --help for support info\n\r".getBytes(StandardCharsets.UTF_8)));
@@ -99,7 +99,7 @@ public class NioTelnetServer {
 
         // добавить имя клиента
 
-        currentpath = clientscurpath.get(client); // Получим текущий путь для клиента
+        Path currentpath = clients.get(client).getCurrentpath(); // Получим текущий путь для клиента
 
         if (key.isValid()) {
             String[] command = sb.toString()
@@ -116,19 +116,19 @@ public class NioTelnetServer {
                             + CAT_COMMAND
                             + CHANGENICK_COMMAND, selector, client);
             } else if ("ls".equals(command[0])) {
-                sendMessage(getFilesList().concat("\n\r"), selector, client);
+                sendMessage(IOCmd.getFilesList(currentpath).concat("\n\r"), selector, client);
             } else if ("mkdir".equals(command[0])) {
-                sendMessage(mkDirCommand(command[1]), selector, client);
+                sendMessage(IOCmd.mkDir(currentpath, command[1]), selector, client);
             } else if ("touch".equals(command[0])) {
-                sendMessage(touchCommand(command[1]), selector, client);
+                sendMessage(IOCmd.crFile(currentpath, command[1]), selector, client);
             } else if ("cd".equals(command[0])) {
                 sendMessage(cdCommand(command[1], client), selector, client);
             } else if ("rm".equals(command[0])) {
-                sendMessage(rmCommand(command[1]), selector, client);
+                sendMessage(IOCmd.delFileOrDir(currentpath, command[1]), selector, client);
             } else if ("copy".equals(command[0])) {
-                sendMessage(copyCommand(command[1], command[2]), selector, client);
+                sendMessage(IOCmd.copyFileOrDir(currentpath, command[1], command[2]), selector, client);
             } else if ("cat".equals(command[0])) {
-                sendMessage(catCommand(command[1]), selector, client);
+                sendMessage(IOCmd.catFile(currentpath, command[1]), selector, client);
             } else if ("changenick".equals(command[0])) {
                 sendMessage(changenickCommand(command[1], client), selector, client);
             }
@@ -136,7 +136,10 @@ public class NioTelnetServer {
     }
 
     private void sendMessage(String message, Selector selector, SocketAddress client) throws IOException {
-        String msg = clients.get(client) + " | " + clientscurpath.get(client) + ">"; // Имя клиента | текущий путь>
+        // Имя клиента | текущий путь>
+        String msg = clients.get(client).getNickname() + " | "
+                     + String.valueOf(clients.get(client).getCurrentpath()).replace(String.valueOf(clients.get(client).getRootpath()), "~")
+                     + ">";
         for (SelectionKey key : selector.keys()) {
             if (key.isValid() && key.channel() instanceof SocketChannel) {
                 if (((SocketChannel) key.channel()).getRemoteAddress().equals(client)) {
@@ -147,91 +150,27 @@ public class NioTelnetServer {
         }
     }
 
-    private String getFilesList() {
-        String[] servers = new File(String.valueOf(currentpath)).list();
-        return String.join(" ", servers);
-    }
-
-    private String mkDirCommand(String dirname) {
-        Path path = Paths.get(currentpath + File.separator + dirname).normalize();
-        try {
-            Files.createDirectory(path);
-        } catch(FileAlreadyExistsException e){
-            return "ERROR: Directory Already Exists\n\r";
-        } catch (IOException e) {
-            return "ERROR: IOException\n\r";
-        }
-        return "Created directory: " + path + "\n\r";
-    }
-
-    private String touchCommand(String filename) {
-        Path path = Paths.get(currentpath + File.separator + filename).normalize();
-        try {
-            Files.createFile(path);
-        } catch(FileAlreadyExistsException e){
-            return "ERROR: File already exists\n\r";
-        } catch (IOException e) {
-            return "ERROR: IOException\n\r";
-        }
-        return "Created file: " + path + "\n\r";
-    }
 
     private String cdCommand(String newpath, SocketAddress client) {
-        Path path = Paths.get(clientscurpath.get(client) + File.separator + newpath).normalize();
-        if (path.toString() == "")  {
+        Path path = Paths.get(clients.get(client).getCurrentpath() + File.separator + newpath).normalize();
+        if ("..".equals(newpath) & clients.get(client).getCurrentpath() == clients.get(client).getRootpath())  {
             return "Current path is root! (path no change)\n\r";
         }
+        if ("~".equals(newpath)) {
+            clients.get(client).setCurrentpath(clients.get(client).getRootpath());
+            return "";
+        }
         if (Files.exists(path)) {
-            currentpath = path;
-            clientscurpath.put(client, path);
+            clients.get(client).setCurrentpath(path);
         } else {
             return "ERROR: The path does not exist!\n\r";
         }
         return "";
     }
 
-    private String rmCommand(String fileordirname) {
-        Path path = Paths.get(currentpath + File.separator + fileordirname).normalize();
-        if (!Files.exists(path)) {
-            return "ERROR: The file / directory does not exist!\n\r";
-        } else try {
-            Files.delete(path);
-            return fileordirname + " removed\n\r";
-        } catch (IOException e) {
-            return "ERROR: Failed to delete the file or directory is not empty!\n\r";
-        }
-    }
-
-    private String copyCommand(String srcPath, String dstPath) {
-        Path sourcePath      = Paths.get(currentpath + File.separator + srcPath).normalize();
-        Path destinationPath = Paths.get(currentpath + File.separator + dstPath).normalize();
-        try {
-            Files.copy(sourcePath, destinationPath);
-            return sourcePath + " copied to " + destinationPath + "\n\r";
-        } catch(FileAlreadyExistsException e) {
-            return "ERROR: The destination file / directory already exist!\n\r";
-        } catch (IOException e) {
-            return "ERROR: IOException\n\r";
-        }
-    }
-
-    private String catCommand(String filename) {
-        Path path = Paths.get(currentpath + File.separator + filename).normalize();
-        if (!Files.exists(path)) {
-            return "ERROR: The file does not exist!\n\r";
-        }
-        List<String> lines = null;
-        try {
-            lines = Files.readAllLines(path, StandardCharsets.UTF_8);
-        } catch (IOException e) {
-            return "ERROR: IOException\n\r";
-        }
-        lines.add("");
-        return String.join("\n\r", lines);
-    }
 
     private String changenickCommand(String newnick, SocketAddress client) {
-        clients.put(client, newnick);
+        clients.get(client).setNickname(newnick);
         return "";
     }
 
